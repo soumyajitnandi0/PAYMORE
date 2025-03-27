@@ -51,7 +51,7 @@ class MainActivity : AppCompatActivity() {
                 return
             }
 
-            val upiId = "7384427171-4@ybl"  // Your verified UPI ID
+            val upiId = "www.crushcruisher@oksbi"  // Your verified UPI ID
             val merchantName = "PAYMORE"
 
             val upiUri = Uri.parse(
@@ -66,8 +66,6 @@ class MainActivity : AppCompatActivity() {
             val upiIntent = Intent(Intent.ACTION_VIEW, upiUri)
 
             val upiApps = listOf(
-                "com.google.android.apps.nbu.paisa.user",  // Google Pay
-                "in.org.npci.upiapp",                      // BHIM
                 "com.phonepe.app",                         // PhonePe
                 "com.paytm.wallet",                        // Paytm
                 "net.one97.paytm"                          // Paytm Alternate
