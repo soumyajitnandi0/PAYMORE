@@ -44,91 +44,132 @@ class MainActivity : AppCompatActivity() {
 
     private fun startUpiPayment(amount: String) {
         try {
-            // Use a verified UPI ID format
-            val upiId = "7384427171-4@ybl"  // Replace with actual verified UPI ID
+            // Validate amount
+            val parsedAmount = amount.toDoubleOrNull()
+            if (parsedAmount == null || parsedAmount <= 0) {
+                Toast.makeText(this, "Invalid amount", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            val upiId = "7384427171-4@ybl"  // Your verified UPI ID
+            val merchantName = "PAYMORE"
 
             val upiUri = Uri.parse(
                 "upi://pay?" +
                         "pa=$upiId&" +
-                        "pn=Soumyajit Nandi&" +
+                        "pn=$merchantName&" +
                         "am=$amount&" +
                         "cu=INR&" +
-                        "tn=Test Transaction"
+                        "tn=Detailed Payment Debug"
             )
 
             val upiIntent = Intent(Intent.ACTION_VIEW, upiUri)
-            // Try multiple UPI apps if possible
-            val apps = listOf(
+
+            val upiApps = listOf(
                 "com.google.android.apps.nbu.paisa.user",  // Google Pay
-                "in.org.npci.upiapp",  // BHIM
-                "com.phonepe.app"  // PhonePe
+                "in.org.npci.upiapp",                      // BHIM
+                "com.phonepe.app",                         // PhonePe
+                "com.paytm.wallet",                        // Paytm
+                "net.one97.paytm"                          // Paytm Alternate
             )
 
-            // Try different UPI apps
-            for (app in apps) {
+            var paymentAttempted = false
+            for (app in upiApps) {
                 upiIntent.setPackage(app)
                 try {
                     startActivityForResult(upiIntent, UPI_PAYMENT_REQUEST)
-                    return
+                    paymentAttempted = true
+                    break
                 } catch (e: Exception) {
-                    Log.e("UPI_PAYMENT", "Failed with app $app: ${e.message}")
+                    Log.w("UPI_PAYMENT_DEBUG", "App attempt failed: $app, Error: ${e.message}")
                 }
             }
 
-            Toast.makeText(this, "No UPI app found", Toast.LENGTH_SHORT).show()
+            if (!paymentAttempted) {
+                Toast.makeText(this, "No compatible UPI app found", Toast.LENGTH_LONG).show()
+            }
+
         } catch (e: Exception) {
-            Toast.makeText(this, "Payment initiation error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            Log.e("UPI_PAYMENT_DEBUG", "Payment initiation error", e)
+            Toast.makeText(this, "Payment setup error", Toast.LENGTH_LONG).show()
         }
     }
-
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
         if (requestCode == UPI_PAYMENT_REQUEST) {
-            if (data != null) {
-                val responseStr = data.getStringExtra("response") ?: ""
-                Log.e("UPI_FULL_RESPONSE", "Complete Response: $responseStr")
+            // Comprehensive logging of full response
+            val responseStr = data?.getStringExtra("response") ?: ""
+            Log.e("UPI_FULL_RESPONSE", "Complete Raw Response: $responseStr")
 
-                // Detailed logging of all parameters
-                responseStr.split("&").forEach { param ->
-                    Log.d("UPI_PARAM", param)
+            // Detailed parameter logging
+            responseStr.split("&").forEach { param ->
+                Log.d("UPI_PARAM_DEBUG", "Param: $param")
+            }
+
+            val status = parseUpiResponse(responseStr, "Status") ?: "FAILED"
+            val txnId = parseUpiResponse(responseStr, "TxnId")
+            val responseCode = parseUpiResponse(responseStr, "ResponseCode")
+            val approvalRefNo = parseUpiResponse(responseStr, "ApprovalRefNo")
+
+            // Enhanced logging for debugging
+            Log.e("UPI_PAYMENT_DEBUG", """
+            Status: $status
+            Transaction ID: $txnId
+            Response Code: $responseCode
+            Approval Ref No: $approvalRefNo
+        """.trimIndent())
+
+            when {
+                status.equals("SUCCESS", true) -> {
+                    Toast.makeText(this, "Payment Successful", Toast.LENGTH_SHORT).show()
+                    saveTransaction(txnId, amountInput.text.toString(), "SUCCESS")
                 }
-
-                val status = parseUpiResponse(responseStr, "Status") ?: "FAILED"
-                val responseCode = parseUpiResponse(responseStr, "ResponseCode")
-                val txnId = parseUpiResponse(responseStr, "TxnId")
-
-                // More detailed error handling
-                when {
-                    status.equals("SUCCESS", true) -> {
-                        Toast.makeText(this, "Payment Successful", Toast.LENGTH_SHORT).show()
-                        saveTransaction(txnId, amountInput.text.toString(), "SUCCESS")
-                    }
-                    status.equals("PENDING", true) -> {
-                        Toast.makeText(this, "Payment Pending", Toast.LENGTH_SHORT).show()
-                        saveTransaction(txnId, amountInput.text.toString(), "PENDING")
-                    }
-                    else -> {
-                        // Log specific error details
-                        Log.e("UPI_ERROR", "Status: $status, Response Code: $responseCode")
-                        Toast.makeText(this, "Payment Failed: $status", Toast.LENGTH_LONG).show()
-                        saveTransaction(txnId, amountInput.text.toString(), "FAILED")
-                    }
+                status.equals("PENDING", true) -> {
+                    Toast.makeText(this, "Payment Pending", Toast.LENGTH_SHORT).show()
+                    saveTransaction(txnId, amountInput.text.toString(), "PENDING")
                 }
-            } else {
-                Toast.makeText(this, "Payment Cancelled or No Response", Toast.LENGTH_SHORT).show()
-                saveTransaction(null, amountInput.text.toString(), "CANCELLED")
+                else -> {
+                    val errorDetails = """
+                    Detailed Error Information:
+                    Status: $status
+                    Response Code: $responseCode
+                    Transaction ID: $txnId
+                """.trimIndent()
+
+                    Log.e("UPI_PAYMENT_ERROR", errorDetails)
+
+                    val errorMessage = when {
+                        status == "FAILURE" && responseCode == "Z302" ->
+                            "Transaction Limit Exceeded. Please check with your bank."
+                        responseCode == "Z301" ->
+                            "Insufficient Balance"
+                        responseCode == "U40" ->
+                            "Incorrect UPI PIN"
+                        else ->
+                            "Payment Failed: $status (Code: $responseCode)"
+                    }
+
+                    Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
+                    saveTransaction(txnId, amountInput.text.toString(), "FAILED")
+                }
             }
         }
     }
 
-    // Helper function to parse UPI response
+    // Enhanced parsing to handle more complex responses
     private fun parseUpiResponse(response: String, key: String): String? {
-        return response.split("&")
-            .map { it.split("=") }
-            .firstOrNull { it.size == 2 && it[0] == key }
-            ?.getOrNull(1)
+        return try {
+            response.split("&")
+                .map { it.split("=") }
+                .firstOrNull { it.size == 2 && it[0].equals(key, ignoreCase = true) }
+                ?.getOrNull(1)
+                ?.let { Uri.decode(it) }
+        } catch (e: Exception) {
+            Log.e("UPI_RESPONSE_PARSE", "Error parsing $key", e)
+            null
+        }
     }
 
     private fun saveTransaction(txnId: String?, amount: String, status: String) {
